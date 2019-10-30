@@ -216,58 +216,36 @@ class Reducer(object):
 
         cuts.sort(key=lambda t: (t[0] - t[1], t[0]))
 
-        results = Stream(
-            self.filter(lambda t: self.predicate(target[: t[0]] + target[t[1] :]), cuts)
-        )
-
         good_cuts = []
 
-        i = 0
-        while results[i : i + 1]:
+        def can_cut(i, j):
+            return self.predicate(cut_all(target, good_cuts + [(i, j)]))
 
-            def can_merge(k):
-                parts = results[i : i + k]
-                if len(parts) < k:
-                    return False
-                return self.predicate(cut_all(target, good_cuts + parts))
+        loss_to_incompatibility = 0
+        successful_cuts = 0
 
-            k = find_integer(can_merge)
-            good_cuts.extend(results[i : i + k])
-            i += k + 1
-
-        if not good_cuts:
-            return
-
-        loss_to_incompatibility = len(list(results)) - len(good_cuts)
-
-        initial_length = len(good_cuts)
-        good_cuts = merged_cuts(good_cuts)
-        loss_to_merging = initial_length - len(good_cuts)
-
-        loss = loss_to_incompatibility + loss_to_merging
+        for cut in self.filter(
+            lambda t: self.predicate(target[: t[0]] + target[t[1] :]), cuts
+        ):
+            successful_cuts += 1
+            if can_cut(*cut):
+                enlarged = cutting_strategy.enlarge_cut(*cut, can_cut)
+                good_cuts.append(enlarged)
+                if enlarged != cut:
+                    self.debug(
+                        f"Enlarged cut from {cut[1] - cut[0]} bytes to {enlarged[1] - enlarged[0]} bytes"
+                    )
+            else:
+                loss_to_incompatibility += 1
 
         self.debug(
-            f"Applied {len(good_cuts)} / {len(cuts)} cuts."
+            f"{successful_cuts} / {len(cuts)} cuts succeeded"
             + (
-                f" Lost {loss_to_incompatibility} to incompatibility and {loss_to_merging} to merging."
-                if loss > 0
-                else ""
+                "."
+                if loss_to_incompatibility == 0
+                else f" but {loss_to_incompatibility} were lost when combining"
             )
         )
-
-        for cut in list(good_cuts):
-            enlarged = cutting_strategy.enlarge_cut(
-                *cut, lambda i, j: self.predicate(cut_all(target, good_cuts + [(i, j)]))
-            )
-            if enlarged != cut:
-                self.debug(
-                    f"Enlarged cut {cut} to {enlarged} (increase of {enlarged[1] - enlarged[0] + cut[0] - cut[1]} bytes)"
-                )
-
-                good_cuts.append(enlarged)
-                good_cuts = merged_cuts(good_cuts)
-
-                assert self.predicate(cut_all(target, good_cuts))
 
     def __map(self, f, ls):
         if self.__thread_pool is not None:
