@@ -32,8 +32,8 @@ class InvalidArguments(Exception):
 class Reducer(object):
 
     CUTTING_STRATEGIES = [
-        NGramCuttingStrategy,
         BracketCuttingStrategy,
+        NGramCuttingStrategy,
         CharCuttingStrategy,
         TokenCuttingStrategy,
         ShortCuttingStrategy,
