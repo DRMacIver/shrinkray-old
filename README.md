@@ -21,8 +21,9 @@ by reporting a bug which is hard to understand.
 ## Why use shrink ray?
 
 Basically you should use shrink ray whenever [C-Reduce](https://github.com/csmith-project/creduce) is not working well on your problem.
-Most of the time if your input format is some vaguely C-Like language you should consider just using C-Reduce instead.
-When your input format is *actually* C you should definitely use C-Reduce instead of Shrink Ray.
+If your input format is some vaguely C-Like language you should probably just use C-Reduce instead,
+if your input format is *actually* C you should definitely use C-Reduce instead of Shrink Ray,
+but if your input format is quite far from C then Shrink Ray might be a better choice than C-Reduce.
 
 Shrink Ray has a goal of producing smaller results than any test-case reducer that isn't C-Reduce or of a similar level of specialisation to it.
 I can't currently promise it *achieves* that goal, but it is likely to do fairly well on most input formats - certainly better than a basic delta-debugging based approach -
