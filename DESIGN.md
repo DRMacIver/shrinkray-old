@@ -73,7 +73,7 @@ Once chaos mode has stopped producing good results, Shrink Ray switches to a det
 
 The details of this are fairly straightforward, but two notable features are:
 
-1. Values of `i` are tried from larges to smallest, as dependencies will tend to go in that direction. Going from smallest to largest will tend to "unlock" more on subsequent passes.
+1. Values of `i` are tried from largest to smallest, as dependencies will tend to go in that direction. Going from smallest to largest will tend to "unlock" more on subsequent passes.
 2. The cuts are found based on a parallel implementation of a function `find_first`, which finds the first element of some sequence satisfying a predicate. `find_first` can be implemented so that it scales reasonably well across multiple cores - if the index of result is much larger than the number of available cores it will almost perfectly use all the available parallelism - and can be designed to do not too much wasted work (no more than twice as many calls as should be required) when the index of the result is small.
 
 ## Pass Ordering
