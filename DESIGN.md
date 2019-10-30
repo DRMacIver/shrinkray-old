@@ -5,7 +5,7 @@ They are far from complete.
 
 ## Concurrency
 
-The basic design of shrink ray is that it will make use of what parallelismparallelism is available to it,
+The basic design of shrink ray is that it will make use of what parallelism is available to it,
 but it will produce the same results regardless of its parallelism level.
 
 Most of its speedups from parallelism will come when it is failing to make progress: In general *verifying* that each of `n` transformations fails to reduce the test case is embarassingly parallel,
