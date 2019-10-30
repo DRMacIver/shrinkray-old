@@ -13,15 +13,15 @@ Shrink Ray
 ==========
 
 Shrink Ray is a new type of test-case reducer designed to be effective on
-a wide range of formats. See the
-[full README](https://github.com/DRMacIver/shrinkray/blob/master/README.md)
+a wide range of formats. See the full README at
+https://github.com/DRMacIver/shrinkray/blob/master/README.md
 for more details.
-"""
+""".strip()
 
 
 setup(
     name='shrinkray',
-    version="0.0.1",
+    version="0.0.2",
     author='David R. MacIver',
     author_email='david@drmaciver.com',
     packages=find_packages(SOURCE),
