@@ -260,8 +260,6 @@ class Reducer(object):
 
 
 def merged_cuts(cuts):
-    endpoints = {i for t in cuts for i in t}
-
     merged = []
 
     for t in sorted(cuts):
@@ -271,19 +269,19 @@ def merged_cuts(cuts):
         else:
             merged[-1][-1] = max(j, merged[-1][-1])
 
-    for t in merged:
-        assert set(t).issubset(endpoints)
-
     return list(map(tuple, merged))
 
 
 def cut_all(target, cuts):
-    attempt = bytearray(target)
-
-    for i, j in reversed(merged_cuts(cuts)):
-        assert 0 <= i < j <= len(target), (i, j)
-        del attempt[i:j]
-    return bytes(attempt)
+    cuts = merged_cuts(cuts)
+    target = memoryview(target)
+    result = bytearray()
+    prev = 0
+    for u, v in cuts:
+        result.extend(target[prev:u])
+        prev = v
+    result.extend(target[prev:])
+    return bytes(result)
 
 
 class NotFound(Exception):
