@@ -184,6 +184,7 @@ class Reducer(object):
         self.try_all_cuts(target, random_cuts(), cutting_strategy)
 
     def deterministic_cutting(self):
+        self.debug("Beginning deterministic cutting")
         i = len(self.target)
         while i > 0:
             target = self.target
