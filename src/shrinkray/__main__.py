@@ -93,6 +93,14 @@ If FILENAME is "-" then shrinkray will read its input from stdin.
         "no timeout will be used."
     ),
 )
+@click.option(
+    "--input-mode", type=click.Choices(["stdin", "file"]), default="stdin", help=(
+        "How to pass input to the test program. If set to stdin, input will be passed to "
+        "the program via its stdin. If set to file, a file of the same name as the original "
+        "will be created in the temporary current working directly. This is mostly useful for "
+        "compatibility with C-Reduce."
+    )
+)
 @click.argument("test", callback=validate_command)
 @click.argument(
     "filename",
@@ -114,13 +122,18 @@ Number of tests to run in parallel. If set to <= 0 will default to (1, n_cores -
 Set a random seed to use for nondeterministic parts of the reduction process.
 """,
 )
-def reducer(debug, test, filename, timeout, target, parallelism, seed):
+def reducer(debug, test, filename, timeout, target, parallelism, seed, input_mode):
+    if input_mode == "file" and filename == "-":
+        raise click.UsageError("Cannot combine --input-mode=file with reading from stdin.")
+
     if debug:
 
         def dump_trace(signum, frame):
             traceback.print_stack()
 
         signal.signal(signal.SIGQUIT, dump_trace)
+
+    basename = os.path.basename(filename)
 
     def classify_data(string):
         with tempfile.TemporaryDirectory() as d:
@@ -133,6 +146,12 @@ def reducer(debug, test, filename, timeout, target, parallelism, seed):
                 preexec_fn=os.setsid,
                 cwd=d,
             )
+
+            if input_mode == "file":
+                with open(os.path.join(d, basename), "wb") as o:
+                    o.write(string) 
+                string = b''
+
             try:
                 sp.communicate(string, timeout=timeout)
             except subprocess.TimeoutExpired:
@@ -169,8 +188,7 @@ def reducer(debug, test, filename, timeout, target, parallelism, seed):
             random=Random(seed),
         )
     except InvalidArguments as e:
-        print(e.args[0], file=sys.stderr)
-        sys.exit(1)
+        raise click.UsageError(e.args[0])
 
     pb = None
 
