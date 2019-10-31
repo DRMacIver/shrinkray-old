@@ -113,8 +113,7 @@ class Reducer(object):
         while prev is not self.target:
             prev = self.target
 
-            for cs in Reducer.CUTTING_STRATEGIES:
-                self.deterministic_run(cs)
+            self.deterministic_cutting()
 
             if prev is self.target:
                 self.take_prefixes()
@@ -184,27 +183,28 @@ class Reducer(object):
 
         self.try_all_cuts(target, random_cuts(), cutting_strategy)
 
-    def deterministic_run(self, cutting_strategy_class):
-        self.debug(
-            f"Beginning deterministic run with {cutting_strategy_class.__name__}"
-        )
-
+    def deterministic_cutting(self):
         i = len(self.target)
         while i > 0:
             target = self.target
-            cutting_strategy = cutting_strategy_class(self, target)
+            cutting_strategies = [
+                cls(self, target) for cls in Reducer.CUTTING_STRATEGIES
+            ]
             try:
-                i, j = self.__find_first(
+                i, j, cs = self.__find_first(
                     lambda t: self.predicate(target[: t[0]] + target[t[1] :]),
                     (
-                        (a, b)
+                        (a, b, cs)
                         for a in range(min(i, len(target)) - 1, -1, -1)
-                        for b in reversed(cutting_strategy.endpoints(a))
+                        for cs in cutting_strategies
+                        for b in reversed(cs.endpoints(a))
                     ),
                 )
+                self.debug(f"Successful cut with {cs.__class__.__name__}")
+
             except NotFound:
                 break
-            i, j = cutting_strategy.enlarge_cut(
+            i, j = cs.enlarge_cut(
                 i, j, lambda a, b: self.predicate(target[:a] + target[b:])
             )
 
