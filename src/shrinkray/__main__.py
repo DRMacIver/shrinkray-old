@@ -86,7 +86,7 @@ If FILENAME is "-" then shrinkray will read its input from stdin.
 )
 @click.option(
     "--timeout",
-    default=1,
+    default=5,
     type=click.FLOAT,
     help=(
         "Time out subprocesses after this many seconds. If set to <= 0 then "
