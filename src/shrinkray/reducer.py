@@ -41,7 +41,9 @@ class Reducer(object):
         CutRepetitions,
     ]
 
-    def __init__(self, initial, predicate, debug=False, parallelism=1, random=None, lexical=True):
+    def __init__(
+        self, initial, predicate, debug=False, parallelism=1, random=None, lexical=True
+    ):
         if not initial:
             raise InvalidArguments("Initial example is empty")
 
@@ -175,6 +177,7 @@ class Reducer(object):
 
         self.debug("Rewriting alphabet")
         for a in alphabet:
+
             def can_lower(k):
                 if k > a:
                     return False
@@ -184,6 +187,7 @@ class Reducer(object):
                     return self.predicate(attempt)
                 finally:
                     rewritten[a] = a
+
             k = find_integer(can_lower)
             if k > 0:
                 self.debug(f"Lowering all {bytes([a])} bytes to {bytes([a - k])}")
@@ -207,8 +211,7 @@ class Reducer(object):
                 return self.predicate(cut_all(target, good_cuts + [(i, j)]))
 
             for i, j in self.filter(
-                lambda t: self.predicate(target[:t[0]] + target[t[1]:]),
-                sampler
+                lambda t: self.predicate(target[: t[0]] + target[t[1] :]), sampler
             ):
                 if not can_cut(i, j):
                     assert good_cuts
@@ -229,7 +232,6 @@ class Reducer(object):
             else:
                 failures = 0
 
-
     def deterministic_cutting(self):
         self.debug("Beginning deterministic cutting")
         i = len(self.target)
@@ -248,7 +250,9 @@ class Reducer(object):
                         for b in reversed(cs.endpoints(a))
                     ),
                 )
-                self.debug(f"Successful cut at {i} / {len(target)} with {cs.__class__.__name__}")
+                self.debug(
+                    f"Successful cut at {i} / {len(target)} with {cs.__class__.__name__}"
+                )
 
             except NotFound:
                 break

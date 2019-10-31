@@ -339,7 +339,9 @@ class ToCharsCuttingStrategy(CuttingStrategy):
         j_index = bisect.bisect_left(eps, j)
         assert eps[j_index] == j
 
-        j_index += find_integer(lambda k: j_index + k < len(eps) and predicate(i, eps[j_index + k]))
+        j_index += find_integer(
+            lambda k: j_index + k < len(eps) and predicate(i, eps[j_index + k])
+        )
 
         j = eps[j_index]
         i -= find_integer(lambda k: k <= i and predicate(i - k, j))

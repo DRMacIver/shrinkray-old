@@ -133,7 +133,9 @@ Number of tests to run in parallel. If set to <= 0 will default to (1, n_cores -
 Set a random seed to use for nondeterministic parts of the reduction process.
 """,
 )
-def reducer(debug, test, filename, timeout, target, parallelism, seed, input_mode, lexical):
+def reducer(
+    debug, test, filename, timeout, target, parallelism, seed, input_mode, lexical
+):
     if input_mode == "file" and filename == "-":
         raise click.UsageError(
             "Cannot combine --input-mode=file with reading from stdin."
