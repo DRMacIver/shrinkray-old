@@ -52,7 +52,7 @@ class Reducer(object):
         self.__parallelism = parallelism
         self.__predicate = predicate
         self.__lock = Lock()
-        self.__random = random or Random(0)
+        self.random = random or Random(0)
         self.__improvement_callbacks = []
         self.__lexical = lexical
 
@@ -112,11 +112,8 @@ class Reducer(object):
         return result
 
     def run(self):
-        for cs in Reducer.CUTTING_STRATEGIES:
-            prev = float("inf")
-            while len(self.target) <= 0.99 * prev:
-                prev = len(self.target)
-                self.chaos_run(cs)
+        for cs in self.CUTTING_STRATEGIES:
+            self.chaos_run(cs)
 
         self.alphabet_reduce()
 
@@ -193,33 +190,45 @@ class Reducer(object):
             rewritten[a] -= k
 
     def chaos_run(self, cutting_strategy_class):
-        self.debug(f"Beginning chaos run with {cutting_strategy_class.__name__}")
+        self.debug(f"Beginning chaos run for {cutting_strategy_class.__name__}")
 
-        target = self.target
+        failures = 0
 
-        cutting_strategy = cutting_strategy_class(self, target)
+        while failures < 3:
+            target = self.target
+            cutting_strategy = cutting_strategy_class(self, target)
+            sampler = EndpointSampler(cutting_strategy)
 
-        def random_cuts():
-            indices = LazySequenceCopy(range(len(target)))
-            endpoints_remaining = {}
-            cuts = 0
+            initial_size = len(target)
 
-            while indices and cuts < 1000:
-                i_index = self.__random.randrange(0, len(indices))
-                i = indices[i_index]
-                try:
-                    endpoints = endpoints_remaining[i]
-                except KeyError:
-                    endpoints = endpoints_remaining.setdefault(
-                        i, LazySequenceCopy(cutting_strategy.endpoints(i))
-                    )
-                if not endpoints:
-                    swap_and_pop(indices, i_index)
-                    continue
-                yield (i, pop_random(endpoints, self.__random))
-                cuts += 1
+            good_cuts = []
 
-        self.try_all_cuts(target, random_cuts(), cutting_strategy)
+            def can_cut(i, j):
+                return self.predicate(cut_all(target, good_cuts + [(i, j)]))
+
+            for i, j in self.filter(
+                lambda t: self.predicate(target[:t[0]] + target[t[1]:]),
+                sampler
+            ):
+                if not can_cut(i, j):
+                    assert good_cuts
+                    break
+                good_cuts.append(cutting_strategy.enlarge_cut(i, j, can_cut))
+
+            if not good_cuts:
+                return
+
+            target = cut_all(target, good_cuts)
+
+            self.debug(
+                f"{len(good_cuts)} cuts succeeded deleting {initial_size - len(target)} bytes."
+            )
+
+            if len(good_cuts) < 10:
+                failures += 1
+            else:
+                failures = 0
+
 
     def deterministic_cutting(self):
         self.debug("Beginning deterministic cutting")
@@ -239,7 +248,7 @@ class Reducer(object):
                         for b in reversed(cs.endpoints(a))
                     ),
                 )
-                self.debug(f"Successful cut with {cs.__class__.__name__}")
+                self.debug(f"Successful cut at {i} / {len(target)} with {cs.__class__.__name__}")
 
             except NotFound:
                 break
@@ -252,47 +261,24 @@ class Reducer(object):
         if not cuts:
             return
 
-        cuts.sort(key=lambda t: (t[0] - t[1], t[0]))
-
-        good_cuts = []
-
-        def can_cut(i, j):
-            return self.predicate(cut_all(target, good_cuts + [(i, j)]))
-
-        loss_to_incompatibility = 0
-        successful_cuts = 0
-
-        for cut in self.filter(
-            lambda t: self.predicate(target[: t[0]] + target[t[1] :]), cuts
-        ):
-            successful_cuts += 1
-            if can_cut(*cut):
-                enlarged = cutting_strategy.enlarge_cut(*cut, can_cut)
-                good_cuts.append(enlarged)
-                if enlarged != cut:
-                    self.debug(
-                        f"Enlarged cut from {cut[1] - cut[0]} bytes to {enlarged[1] - enlarged[0]} bytes"
-                    )
-            else:
-                loss_to_incompatibility += 1
-
-        self.debug(
-            f"{successful_cuts} / {len(cuts)} cuts succeeded"
-            + (
-                "."
-                if loss_to_incompatibility == 0
-                else f" but {loss_to_incompatibility} were lost when combining"
-            )
-        )
-
-    def __map(self, f, ls):
+    def map(self, f, ls):
         if self.__thread_pool is not None:
-            return self.__thread_pool.map(f, ls)
+            it = iter(ls)
+
+            block_size = self.__parallelism
+
+            any_yields = True
+            while any_yields:
+                any_yields = False
+                for v in self.__thread_pool.map(f, itertools.islice(it, block_size)):
+                    any_yields = True
+                    yield v
+                block_size *= 2
         else:
             return map(f, ls)
 
     def filter(self, f, ls):
-        for x, r in self.__map(lambda x: (x, f(x)), ls):
+        for x, r in self.map(lambda x: (x, f(x)), ls):
             if r:
                 yield x
 
@@ -333,3 +319,31 @@ def cache_key(s):
 
 def sort_key(s):
     return (len(s), s)
+
+
+class EndpointSampler(object):
+    def __init__(self, cutting_strategy):
+        self.cutting_strategy = cutting_strategy
+        self.indices = LazySequenceCopy(range(len(cutting_strategy.target)))
+        self.endpoints_remaining = {}
+
+    def __iter__(self):
+        cs = self.cutting_strategy
+        random = cs.reducer.random
+        indices = self.indices
+        endpoints_remaining = self.endpoints_remaining
+
+        while self.indices:
+            i_index = random.randrange(0, len(indices))
+            i = indices[i_index]
+            try:
+                endpoints = endpoints_remaining[i]
+            except KeyError:
+                endpoints = endpoints_remaining.setdefault(
+                    i, LazySequenceCopy(cs.endpoints(i))
+                )
+            if not endpoints:
+                swap_and_pop(indices, i_index)
+                continue
+
+            yield (i, pop_random(endpoints, random))
