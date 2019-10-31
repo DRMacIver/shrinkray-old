@@ -53,7 +53,6 @@ class CuttingStrategy(object):
 
 class NGramCuttingStrategy(CuttingStrategy):
     def calc_endpoints(self, i):
-        assert i >= 0
         k = 1
         indices = []
         while True:

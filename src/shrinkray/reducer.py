@@ -18,7 +18,6 @@ from shrinkray.cutting import (
 )
 from shrinkray.junkdrawer import (
     LazySequenceCopy,
-    Stream,
     find_integer,
     pop_random,
     swap_and_pop,
