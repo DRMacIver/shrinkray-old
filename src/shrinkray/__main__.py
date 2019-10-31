@@ -85,6 +85,14 @@ If FILENAME is "-" then shrinkray will read its input from stdin.
     ),
 )
 @click.option(
+    "--lexical/--size-only",
+    default=True,
+    help=(
+        "Controls whether to enable lexical passes that don't directly "
+        "attempt to reduce the size but may unlock further reductions."
+    ),
+)
+@click.option(
     "--timeout",
     default=5,
     type=click.FLOAT,
@@ -125,7 +133,7 @@ Number of tests to run in parallel. If set to <= 0 will default to (1, n_cores -
 Set a random seed to use for nondeterministic parts of the reduction process.
 """,
 )
-def reducer(debug, test, filename, timeout, target, parallelism, seed, input_mode):
+def reducer(debug, test, filename, timeout, target, parallelism, seed, input_mode, lexical):
     if input_mode == "file" and filename == "-":
         raise click.UsageError(
             "Cannot combine --input-mode=file with reading from stdin."
@@ -191,6 +199,7 @@ def reducer(debug, test, filename, timeout, target, parallelism, seed, input_mod
             debug=debug,
             parallelism=parallelism,
             random=Random(seed),
+            lexical=lexical,
         )
     except InvalidArguments as e:
         raise click.UsageError(e.args[0])

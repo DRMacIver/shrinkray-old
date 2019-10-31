@@ -39,7 +39,7 @@ class Reducer(object):
         CutRepetitions,
     ]
 
-    def __init__(self, initial, predicate, debug=False, parallelism=1, random=None):
+    def __init__(self, initial, predicate, debug=False, parallelism=1, random=None, lexical=True):
         if not initial:
             raise InvalidArguments("Initial example is empty")
 
@@ -52,6 +52,7 @@ class Reducer(object):
         self.__lock = Lock()
         self.__random = random or Random(0)
         self.__improvement_callbacks = []
+        self.__lexical = lexical
 
         if parallelism > 1:
             self.__thread_pool = ThreadPoolExecutor(max_workers=parallelism)
@@ -91,9 +92,10 @@ class Reducer(object):
                 self.__cache[key] = result
 
                 if result and sort_key(value) < sort_key(self.target):
-                    self.debug(
-                        f"Reduced best to {len(value)} bytes (removed {len(self.target) - len(value)} bytes)"
-                    )
+                    if len(value) < len(self.target):
+                        self.debug(
+                            f"Reduced best to {len(value)} bytes (removed {len(self.target) - len(value)} bytes)"
+                        )
                     self.target = value
                     for f in self.__improvement_callbacks:
                         f(value)
@@ -114,6 +116,8 @@ class Reducer(object):
                 prev = len(self.target)
                 self.chaos_run(cs)
 
+        self.alphabet_reduce()
+
         prev = None
         while prev is not self.target:
             prev = self.target
@@ -123,6 +127,9 @@ class Reducer(object):
             if prev is self.target:
                 self.take_prefixes()
                 self.take_suffixes()
+
+            if prev is self.target:
+                self.alphabet_reduce()
 
     def __find_first(self, f, xs):
         if self.__thread_pool is None:
@@ -158,6 +165,30 @@ class Reducer(object):
         self.__find_first(
             lambda i: self.predicate(target[i:]), range(len(target), -1, -1),
         )
+
+    def alphabet_reduce(self):
+        if not self.__lexical:
+            return
+        target = self.target
+        counts = Counter(target)
+        alphabet = sorted(counts, key=counts.__getitem__, reverse=True)
+        rewritten = list(range(256))
+
+        self.debug("Rewriting alphabet")
+        for a in alphabet:
+            def can_lower(k):
+                if k > a:
+                    return False
+                try:
+                    rewritten[a] = a - k
+                    attempt = bytes([rewritten[c] for c in target])
+                    return self.predicate(attempt)
+                finally:
+                    rewritten[a] = a
+            k = find_integer(can_lower)
+            if k > 0:
+                self.debug(f"Lowering all {bytes([a])} bytes to {bytes([a - k])}")
+            rewritten[a] -= k
 
     def chaos_run(self, cutting_strategy_class):
         self.debug(f"Beginning chaos run with {cutting_strategy_class.__name__}")
