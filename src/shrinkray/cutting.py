@@ -10,6 +10,13 @@ class CuttingStrategy(object):
         self.target = target
         self.__endpoints = {}
         self.__index = {}
+        self.__alphabet = None
+
+    @property
+    def alphabet(self):
+        if self.__alphabet is None:
+            self.__alphabet = sorted(set(self.target))
+        return self.__alphabet
 
     def indexes(self, c):
         if isinstance(c, int):
@@ -73,12 +80,16 @@ class NGramCuttingStrategy(CuttingStrategy):
     def enlarge_cut(self, i, j, predicate):
         target = self.target
 
+        assert predicate(i, j)
+
         def can_cut(a, b):
             if not (0 <= a < b <= len(target)):
+                print("BOOP", a, b, len(target))
                 return False
             return predicate(a, b)
 
         assert can_cut(i, j)
+        prev = (i, j)
 
         k = 0
         while i + k < j and j + k < len(target) and target[i + k] == target[j + k]:
@@ -91,19 +102,17 @@ class NGramCuttingStrategy(CuttingStrategy):
 
             assert substring
 
-            indices = [0]
-            while True:
-                try:
-                    indices.append(target.index(substring, indices[-1] + 1))
-                except ValueError:
-                    break
-
-            indices.append(len(target))
-
+            indices = list(self.indexes(substring)) + [len(target)]
             indices = [q for q in indices if abs(i - q) >= len(substring) or i == q]
 
             i_index = indices.index(i)
             j_index = indices.index(j)
+
+            assert prev == (i, j)
+            assert indices[i_index] == i
+            assert indices[j_index] == j
+            assert i != j
+            assert can_cut(i, j)
 
             i_index, j_index = widen_range(
                 lambda a, b: (0 <= a < b < len(indices))
@@ -310,3 +319,29 @@ def widen_range(f, i, j):
 
 
 CHAR_CLASSES = [unicodedata.category(chr(i)) for i in range(256)]
+
+
+class ToCharsCuttingStrategy(CuttingStrategy):
+    def calc_endpoints(self, i):
+        result = []
+        for c in self.alphabet:
+            eps = self.indexes(c)
+            k = bisect.bisect_right(eps, i)
+            if k < len(eps):
+                result.append(eps[k])
+        return result
+
+    def enlarge_cut(self, i, j, predicate):
+        if j >= len(self.target):
+            return (i, j)
+        c = self.target[j]
+        eps = self.indexes(c)
+        j_index = bisect.bisect_left(eps, j)
+        assert eps[j_index] == j
+
+        j_index += find_integer(lambda k: j_index + k < len(eps) and predicate(i, eps[j_index + k]))
+
+        j = eps[j_index]
+        i -= find_integer(lambda k: k <= i and predicate(i - k, j))
+
+        return (i, j)

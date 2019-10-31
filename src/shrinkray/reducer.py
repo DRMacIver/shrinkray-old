@@ -15,6 +15,7 @@ from shrinkray.cutting import (
     NGramCuttingStrategy,
     ShortCuttingStrategy,
     TokenCuttingStrategy,
+    ToCharsCuttingStrategy,
 )
 from shrinkray.junkdrawer import (
     LazySequenceCopy,
@@ -34,6 +35,7 @@ class Reducer(object):
         BracketCuttingStrategy,
         NGramCuttingStrategy,
         CharCuttingStrategy,
+        ToCharsCuttingStrategy,
         TokenCuttingStrategy,
         ShortCuttingStrategy,
         CutRepetitions,
