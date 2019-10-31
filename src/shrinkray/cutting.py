@@ -274,10 +274,7 @@ class CharCuttingStrategy(CuttingStrategy):
         c = self.target[i]
         indices = self.indexes(c)
         i_index = bisect.bisect_left(indices, i)
-        try:
-            return (indices[i_index + 1],)
-        except IndexError:
-            return (len(self.target),)
+        return indices[i_index + 1 : i_index + 10]
 
     def enlarge_cut(self, i, j, predicate):
         c = self.target[i]
