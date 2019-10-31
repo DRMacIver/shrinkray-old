@@ -35,7 +35,6 @@ class Reducer(object):
         BracketCuttingStrategy,
         NGramCuttingStrategy,
         CharCuttingStrategy,
-        ToCharsCuttingStrategy,
         TokenCuttingStrategy,
         ShortCuttingStrategy,
         CutRepetitions,
@@ -123,7 +122,8 @@ class Reducer(object):
         while prev is not self.target:
             prev = self.target
 
-            self.deterministic_cutting()
+            for cs in self.CUTTING_STRATEGIES:
+                self.deterministic_cutting(cs)
 
             if prev is self.target:
                 self.take_prefixes()
@@ -133,25 +133,9 @@ class Reducer(object):
                 self.alphabet_reduce()
 
     def __find_first(self, f, xs):
-        if self.__thread_pool is None:
-            for x in xs:
-                if f(x):
-                    return x
-            raise NotFound()
-        else:
-            xs = iter(xs)
-
-            chunk_size = 1
-
-            while True:
-                chunk = list(itertools.islice(xs, chunk_size))
-                if not chunk:
-                    raise NotFound()
-
-                for v, result in zip(chunk, self.__thread_pool.map(f, chunk)):
-                    if result:
-                        return v
-                chunk_size *= 2
+        for x in self.filter(f, xs):
+            return x
+        raise NotFound()
 
     def take_prefixes(self):
         self.debug("taking prefixes")
@@ -196,74 +180,91 @@ class Reducer(object):
     def chaos_run(self, cutting_strategy_class):
         self.debug(f"Beginning chaos run for {cutting_strategy_class.__name__}")
 
-        failures = 0
+        prev = float("inf")
 
-        while failures < 3:
+        while True:
             target = self.target
+            if len(target) >= prev * 0.99:
+                break
+            prev = len(target)
             cutting_strategy = cutting_strategy_class(self, target)
             sampler = EndpointSampler(cutting_strategy)
 
             initial_size = len(target)
 
-            good_cuts = []
+            good_cuts = self.consume_many_cuts(cutting_strategy, sampler)
 
-            def can_cut(i, j):
-                return self.predicate(cut_all(target, good_cuts + [(i, j)]))
+            working_target = cut_all(target, good_cuts)
 
-            for i, j in self.filter(
-                lambda t: self.predicate(target[: t[0]] + target[t[1] :]), sampler
-            ):
-                if not can_cut(i, j):
-                    assert good_cuts
-                    break
-                good_cuts.append(cutting_strategy.enlarge_cut(i, j, can_cut))
+            self.debug(
+                f"{len(good_cuts)} cuts succeeded deleting {initial_size - len(working_target)} bytes."
+            )
+
+            if len(good_cuts) <= 10:
+                return
+
+    def deterministic_cutting(self, cls):
+        self.debug(f"Beginning deterministic cutting with {cls.__name__}")
+        i = len(self.target)
+        while i > 0:
+            target = self.target
+            self.debug(f"Starting cuts from {i} / {len(target)}")
+
+            cutting_strategy = cls(self, target)
+
+            good_cuts = self.consume_many_cuts(
+                cutting_strategy,
+                (
+                    (a, b)
+                    for a in range(min(i, len(target)) - 1, -1, -1)
+                    for b in reversed(cutting_strategy.endpoints(a))
+                ),
+            )
 
             if not good_cuts:
                 return
 
-            target = cut_all(target, good_cuts)
+            i = good_cuts[0][0]
 
-            self.debug(
-                f"{len(good_cuts)} cuts succeeded deleting {initial_size - len(target)} bytes."
-            )
+    def consume_many_cuts(self, cutting_strategy, cuts):
+        target = cutting_strategy.target
+        working_target = target
 
-            if len(good_cuts) < 10:
-                failures += 1
-            else:
-                failures = 0
+        good_cuts = []
 
-    def deterministic_cutting(self):
-        self.debug("Beginning deterministic cutting")
-        i = len(self.target)
-        while i > 0:
-            target = self.target
-            cutting_strategies = [
-                cls(self, target) for cls in Reducer.CUTTING_STRATEGIES
-            ]
-            try:
-                i, j, cs = self.__find_first(
-                    lambda t: self.predicate(target[: t[0]] + target[t[1] :]),
-                    (
-                        (a, b, cs)
-                        for a in range(min(i, len(target)) - 1, -1, -1)
-                        for cs in cutting_strategies
-                        for b in reversed(cs.endpoints(a))
-                    ),
-                )
-                self.debug(
-                    f"Successful cut at {i} / {len(target)} with {cs.__class__.__name__}"
-                )
+        def can_cut(i, j):
+            if not (0 <= i < j <= len(target)):
+                return False
+            if not good_cuts:
+                return self.predicate(target[:i] + target[j:])
+            if j <= good_cuts[0][0]:
+                return self.predicate(working_target[:i] + working_target[j:])
+            return self.predicate(cut_all(target, good_cuts + [(i, j)]))
 
-            except NotFound:
+        redundant_merges = 0
+
+        for a, b in self.filter(
+            lambda t: self.predicate(target[: t[0]] + target[t[1] :]), cuts,
+        ):
+            if not can_cut(a, b):
+                # We've hit a conflict. Restart the cutting from the last
+                # place we succeeded at cutting.
                 break
-            i, j = cs.enlarge_cut(
-                i, j, lambda a, b: self.predicate(target[:a] + target[b:])
-            )
 
-    def try_all_cuts(self, target, cuts, cutting_strategy):
-        cuts = list(cuts)
-        if not cuts:
-            return
+            good_cuts.append(cutting_strategy.enlarge_cut(a, b, can_cut))
+            good_cuts = merged_cuts(good_cuts)
+
+            # We've gotten to a point where most of the cuts we're discovering
+            # are a bit useless, probably because of a successful cut expansion
+            # that includes them. If this happens then we bail early so as to
+            # not waste time doing work that doesn't need doing.
+            prev = working_target
+            working_target = cut_all(target, good_cuts)
+            if working_target == prev:
+                redundant_merges += 1
+                if redundant_merges >= 10:
+                    break
+        return good_cuts
 
     def map(self, f, ls):
         if self.__thread_pool is not None:
@@ -278,8 +279,10 @@ class Reducer(object):
                     any_yields = True
                     yield v
                 block_size *= 2
+                block_size = min(block_size, 10 * self.__parallelism)
         else:
-            return map(f, ls)
+            for x in ls:
+                yield f(x)
 
     def filter(self, f, ls):
         for x, r in self.map(lambda x: (x, f(x)), ls):

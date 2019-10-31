@@ -84,7 +84,6 @@ class NGramCuttingStrategy(CuttingStrategy):
 
         def can_cut(a, b):
             if not (0 <= a < b <= len(target)):
-                print("BOOP", a, b, len(target))
                 return False
             return predicate(a, b)
 
@@ -97,8 +96,6 @@ class NGramCuttingStrategy(CuttingStrategy):
 
         if k > 0:
             substring = target[i : i + k]
-
-            self.debug(f"Cut with {substring}")
 
             assert substring
 
@@ -122,9 +119,6 @@ class NGramCuttingStrategy(CuttingStrategy):
             )
 
             total = j_index - i_index
-
-            if total > 1:
-                self.debug(f"Deleted {total} runs of {substring}")
 
             i, j = indices[i_index], indices[j_index]
 
