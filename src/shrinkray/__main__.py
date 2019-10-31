@@ -86,7 +86,7 @@ If FILENAME is "-" then shrinkray will read its input from stdin.
 )
 @click.option(
     "--lexical/--size-only",
-    default=True,
+    default=False,
     help=(
         "Controls whether to enable lexical passes that don't directly "
         "attempt to reduce the size but may unlock further reductions."
