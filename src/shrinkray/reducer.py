@@ -97,6 +97,11 @@ class Reducer(object):
                     self.target = value
                     for f in self.__improvement_callbacks:
                         f(value)
+            else:
+                # We want to force consistency even when the test is flaky
+                # (which can happen e.g. due to timeouts in calling the test
+                # script).
+                result = self.__cache[key]
         finally:
             self.__lock.release()
 
