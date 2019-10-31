@@ -1,7 +1,7 @@
 # The Design of Shrink Ray
 
 These are some design notes for shrink ray that attempt to describe how it works.
-They are far from complete.
+They are far from complete, and as I'm currently tinkering with the implementation of Shrink Ray a fair bit they will tend to be a little out of date.
 
 ## Concurrency
 
