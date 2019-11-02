@@ -23,6 +23,7 @@ from shrinkray.junkdrawer import (
     pop_random,
     swap_and_pop,
 )
+import time
 
 
 class InvalidArguments(Exception):
@@ -113,6 +114,8 @@ class Reducer(object):
         return result
 
     def run(self):
+        initial_time = time.monotonic()
+
         for cs in self.CUTTING_STRATEGIES:
             self.chaos_run(cs)
 
@@ -131,6 +134,10 @@ class Reducer(object):
 
             if prev is self.target:
                 self.alphabet_reduce()
+
+        runtime = time.monotonic() - initial_time
+
+        self.debug(f"Reduction completed in {runtime:.2f}s")
 
     def __find_first(self, f, xs):
         for x in self.filter(f, xs):
