@@ -77,11 +77,12 @@ If FILENAME is "-" then shrinkray will read its input from stdin.
     help=("Emit (extremely verbose) debug output while shrinking"),
 )
 @click.option(
-    "--target",
+    "--working-dir",
     default="",
     help=(
-        """The file to write the resulting test case to. Defaults to appending
-        '.reduced' to the end of the original name."""
+        """Directory to save results and intermediate data in. If empty, will
+        default to creating a directory called shrinkray-(some string).
+        """
     ),
 )
 @click.option(
@@ -133,9 +134,62 @@ Number of tests to run in parallel. If set to <= 0 will default to (1, n_cores -
 Set a random seed to use for nondeterministic parts of the reduction process.
 """,
 )
+@click.option(
+    "--also-interesting",
+    type=int,
+    default=30,
+    help="""
+If set to a non-zero return code, when the script exits with this return code
+the variant tried will be saved for later inspection.
+""",
+)
 def reducer(
-    debug, test, filename, timeout, target, parallelism, seed, input_mode, lexical
+    debug,
+    test,
+    filename,
+    timeout,
+    working_dir,
+    parallelism,
+    seed,
+    input_mode,
+    lexical,
+    also_interesting,
 ):
+
+    file_basename = os.path.basename(filename)
+
+    if not working_dir:
+
+        def suffixed(d):
+            nonlocal working_dir
+            if filename != "-":
+                name = f"shrinkray-{file_basename}-{d}"
+            else:
+                name = f"shrinkray-stdin-{d}"
+            try:
+                os.mkdir(name)
+            except FileExistsError:
+                return False
+            working_dir = name
+            return True
+
+        for x in range(1, 10):
+            if suffixed(x):
+                break
+        else:
+
+            r = Random()
+
+            bit_length = 8
+            while True:
+                d = r.getrandbits(bit_length)
+                if suffixed(d):
+                    break
+                bit_length *= 2
+        print(f"Saving results in {working_dir}")
+
+    interesting_dir = os.path.join(working_dir, "interesting")
+
     if input_mode == "file" and filename == "-":
         raise click.UsageError(
             "Cannot combine --input-mode=file with reading from stdin."
@@ -162,6 +216,8 @@ def reducer(
                 cwd=d,
             )
 
+            original_string = string
+
             if input_mode == "file":
                 with open(os.path.join(d, basename), "wb") as o:
                     o.write(string)
@@ -173,13 +229,39 @@ def reducer(
                 return False
             finally:
                 interrupt_wait_and_kill(sp)
+
+            if 0 != sp.returncode == also_interesting:
+                key = hashlib.sha1(string).hexdigest()[:10]
+
+                if filename == "-":
+                    name = f"result-{key}"
+                else:
+                    base, ext = os.path.splitext(os.path.basename(filename))
+                    name = f"{base}-{key}{ext}"
+
+                try:
+                    os.mkdir(interesting_dir)
+                except FileExistsError:
+                    pass
+
+                path = os.path.join(interesting_dir, name)
+
+                try:
+                    with open(path, "xb") as o:
+                        o.write(original_string)
+                    if debug:
+                        print(
+                            f"Recording interesting variant in {path}", file=sys.stderr
+                        )
+                except FileExistsError:
+                    pass
+
             return sp.returncode == 0
 
-    if not target:
-        if filename == "-":
-            target = "reduced"
-        else:
-            target = filename + ".reduced"
+    if filename == "-":
+        target = os.path.join(working_dir, "result")
+    else:
+        target = os.path.join(working_dir, os.path.basename(filename))
 
     timeout *= 10
     if timeout <= 0:
