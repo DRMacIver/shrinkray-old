@@ -169,13 +169,18 @@ def reducer(
     file_basename = os.path.basename(filename)
 
     if not working_dir:
+        base = ".shrinkray"
+        try:
+            os.mkdir(base)
+        except FileExistsError:
+            pass
 
         def suffixed(d):
             nonlocal working_dir
             if filename != "-":
-                name = f"shrinkray-{file_basename}-{d}"
+                name = os.path.join(base, f"{file_basename}-{d}")
             else:
-                name = f"shrinkray-stdin-{d}"
+                name = os.path.join(base, f"stdin-{d}")
             try:
                 os.mkdir(name)
             except FileExistsError:
