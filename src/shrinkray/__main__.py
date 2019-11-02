@@ -11,6 +11,7 @@ import traceback
 from multiprocessing import cpu_count
 from shutil import which
 from random import Random
+from shrinkray.junkdrawer import find_integer
 
 from tqdm import tqdm
 import click
@@ -166,41 +167,31 @@ def reducer(
     slow_mode,
 ):
 
-    file_basename = os.path.basename(filename)
-
     if not working_dir:
-        base = ".shrinkray"
+        file_basename = os.path.basename(filename)
+        if file_basename == "-":
+            file_basename = "stdin"
+
+        base = os.path.join(".shrinkray", file_basename)
         try:
-            os.mkdir(base)
+            os.makedirs(base)
         except FileExistsError:
             pass
 
-        def suffixed(d):
-            nonlocal working_dir
-            if filename != "-":
-                name = os.path.join(base, f"{file_basename}-{d}")
-            else:
-                name = os.path.join(base, f"stdin-{d}")
+        i = 1
+
+        while True:
+            k = find_integer(lambda k: os.path.exists(os.path.join(base, str(i + k))))
+            i += k + 1
+            name = os.path.join(base, str(i))
+
             try:
                 os.mkdir(name)
             except FileExistsError:
-                return False
+                continue
             working_dir = name
-            return True
+            break
 
-        for x in range(1, 10):
-            if suffixed(x):
-                break
-        else:
-
-            r = Random()
-
-            bit_length = 8
-            while True:
-                d = r.getrandbits(bit_length)
-                if suffixed(d):
-                    break
-                bit_length *= 2
         print(f"Saving results in {working_dir}")
 
     interesting_dir = os.path.join(working_dir, "interesting")
