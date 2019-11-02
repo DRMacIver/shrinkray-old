@@ -219,13 +219,21 @@ def reducer(
 
     basename = os.path.basename(filename)
 
+    first_call = True
+
     def classify_data(string):
+        nonlocal first_call
+
+        should_print = debug and first_call and False
+
+        first_call = False
+
         with tempfile.TemporaryDirectory() as d:
             sp = subprocess.Popen(
                 test,
                 stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=sys.stdout if should_print else subprocess.DEVNULL,
+                stderr=sys.stderr if should_print else subprocess.DEVNULL,
                 universal_newlines=False,
                 preexec_fn=os.setsid,
                 cwd=d,
