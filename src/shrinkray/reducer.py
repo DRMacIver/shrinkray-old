@@ -42,7 +42,8 @@ class Reducer(object):
     ]
 
     def __init__(
-        self, initial, predicate, debug=False, parallelism=1, random=None, lexical=True
+        self, initial, predicate, debug=False, parallelism=1, random=None, lexical=True,
+        slow=False,
     ):
         if not initial:
             raise InvalidArguments("Initial example is empty")
@@ -57,6 +58,7 @@ class Reducer(object):
         self.random = random or Random(0)
         self.__improvement_callbacks = []
         self.__lexical = lexical
+        self.__slow = slow
 
         if parallelism > 1:
             self.__thread_pool = ThreadPoolExecutor(max_workers=parallelism)
@@ -113,8 +115,20 @@ class Reducer(object):
 
         return result
 
+
+    def slowly_reduce(self):
+        for cs in reversed(self.CUTTING_STRATEGIES):
+            prev = None
+            while prev is not self.target:
+                prev = self.target
+                self.deterministic_cutting(cs, adaptive=False)
+
+
     def run(self):
         initial_time = time.monotonic()
+
+        if self.__slow:
+            self.slowly_reduce()
 
         for cs in self.CUTTING_STRATEGIES:
             self.chaos_run(cs)
@@ -210,7 +224,7 @@ class Reducer(object):
             if len(good_cuts) <= 10:
                 return
 
-    def deterministic_cutting(self, cls):
+    def deterministic_cutting(self, cls, adaptive=True):
         self.debug(f"Beginning deterministic cutting with {cls.__name__}")
         i = len(self.target)
         while i > 0:
@@ -225,7 +239,7 @@ class Reducer(object):
                     (a, b)
                     for a in range(min(i, len(target)) - 1, -1, -1)
                     for b in reversed(cutting_strategy.endpoints(a))
-                ),
+                ), adaptive=adaptive,
             )
 
             if not good_cuts:
@@ -233,7 +247,7 @@ class Reducer(object):
 
             i = good_cuts[0][0]
 
-    def consume_many_cuts(self, cutting_strategy, cuts):
+    def consume_many_cuts(self, cutting_strategy, cuts, adaptive=True):
         target = cutting_strategy.target
         working_target = target
 
@@ -258,7 +272,12 @@ class Reducer(object):
                 # place we succeeded at cutting.
                 break
 
-            good_cuts.append(cutting_strategy.enlarge_cut(a, b, can_cut))
+            if adaptive:
+                cut = cutting_strategy.enlarge_cut(a, b, can_cut)
+            else:
+                cut = (a, b)
+
+            good_cuts.append(cut)
             good_cuts = merged_cuts(good_cuts)
 
             # We've gotten to a point where most of the cuts we're discovering

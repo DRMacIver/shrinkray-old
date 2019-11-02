@@ -143,6 +143,15 @@ If set to a non-zero return code, when the script exits with this return code
 the variant tried will be saved for later inspection.
 """,
 )
+@click.option(
+    "--slow-mode/--fast-mode",
+    default=False,
+    help="""
+If --slow-mode is past the reducer will run in a very timid mode that takes a
+long time to make progress. You are unlikely to want this, but it can be useful
+as an ersatz fuzzer.
+""",
+)
 def reducer(
     debug,
     test,
@@ -154,6 +163,7 @@ def reducer(
     input_mode,
     lexical,
     also_interesting,
+    slow_mode,
 ):
 
     file_basename = os.path.basename(filename)
@@ -284,6 +294,7 @@ def reducer(
             parallelism=parallelism,
             random=Random(seed),
             lexical=lexical,
+            slow=slow_mode,
         )
     except InvalidArguments as e:
         raise click.UsageError(e.args[0])
