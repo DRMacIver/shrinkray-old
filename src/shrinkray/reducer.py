@@ -42,7 +42,13 @@ class Reducer(object):
     ]
 
     def __init__(
-        self, initial, predicate, debug=False, parallelism=1, random=None, lexical=True,
+        self,
+        initial,
+        predicate,
+        debug=False,
+        parallelism=1,
+        random=None,
+        lexical=True,
         slow=False,
     ):
         if not initial:
@@ -115,14 +121,12 @@ class Reducer(object):
 
         return result
 
-
     def slowly_reduce(self):
         for cs in reversed(self.CUTTING_STRATEGIES):
             prev = None
             while prev is not self.target:
                 prev = self.target
                 self.deterministic_cutting(cs, adaptive=False)
-
 
     def run(self):
         initial_time = time.monotonic()
@@ -239,7 +243,8 @@ class Reducer(object):
                     (a, b)
                     for a in range(min(i, len(target)) - 1, -1, -1)
                     for b in reversed(cutting_strategy.endpoints(a))
-                ), adaptive=adaptive,
+                ),
+                adaptive=adaptive,
             )
 
             if not good_cuts:
