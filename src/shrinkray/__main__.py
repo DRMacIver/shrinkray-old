@@ -153,6 +153,14 @@ long time to make progress. You are unlikely to want this, but it can be useful
 as an ersatz fuzzer.
 """,
 )
+@click.option(
+    "--replace/--no-replace",
+    default=False,
+    help="""
+If --replace is passed then the source file will be replaced with the current
+best example as reduction proceeds.
+""",
+)
 def reducer(
     debug,
     test,
@@ -165,6 +173,7 @@ def reducer(
     lexical,
     also_interesting,
     slow_mode,
+    replace,
 ):
 
     if not working_dir:
@@ -193,13 +202,37 @@ def reducer(
             break
 
         print(f"Saving results in {working_dir}")
+    else:
+        try:
+            os.makedirs(working_dir)
+        except FileExistsError:
+            print(
+                "Working directory already exists and would be overwritten by reduction",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     interesting_dir = os.path.join(working_dir, "interesting")
+    reduction_dir = os.path.join(working_dir, "reductions")
+
+    os.makedirs(reduction_dir)
 
     if input_mode == "file" and filename == "-":
         raise click.UsageError(
             "Cannot combine --input-mode=file with reading from stdin."
         )
+
+    if filename == "-":
+        initial = sys.stdin.buffer.read()
+    else:
+        with open(filename, "rb") as o:
+            initial = o.read()
+
+    if replace:
+        if filename == "-":
+            raise click.UsageError("Cannot combine --replace with reading from stdin.")
+        with open(filename + ".original", "wb") as o:
+            o.write(initial)
 
     if debug:
 
@@ -272,7 +305,9 @@ def reducer(
 
             return sp.returncode == 0
 
-    if filename == "-":
+    if replace:
+        target = os.path.abspath(filename)
+    elif filename == "-":
         target = os.path.join(working_dir, "result")
     else:
         target = os.path.join(working_dir, os.path.basename(filename))
@@ -280,12 +315,6 @@ def reducer(
     timeout *= 10
     if timeout <= 0:
         timeout = None
-
-    if filename == "-":
-        initial = sys.stdin.buffer.read()
-    else:
-        with open(filename, "rb") as o:
-            initial = o.read()
 
     if parallelism <= 0:
         parallelism = max(1, cpu_count() - 1)
@@ -307,8 +336,18 @@ def reducer(
 
     prev = len(initial)
 
+    reduction_count = 0
+
     @reducer.on_improve
     def _(s):
+        nonlocal reduction_count
+        reduction_count += 1
+
+        with open(
+            os.path.join(reduction_dir, f"{reduction_count}-" + file_basename), "bx"
+        ) as o:
+            o.write(s)
+
         if pb is not None:
             nonlocal prev
             pb.update(prev - len(s))
@@ -316,11 +355,14 @@ def reducer(
         with open(target, "wb") as o:
             o.write(s)
 
-    if debug:
-        reducer.run()
-    else:
-        with tqdm(total=len(initial)) as pb:
+    try:
+        if debug:
             reducer.run()
+        else:
+            with tqdm(total=len(initial)) as pb:
+                reducer.run()
+    finally:
+        print(f"Reduced result left in {target}")
 
 
 if __name__ == "__main__":
