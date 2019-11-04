@@ -213,11 +213,28 @@ class Reducer(object):
                 break
             prev = len(target)
             cutting_strategy = cutting_strategy_class(self, target)
-            sampler = EndpointSampler(cutting_strategy)
+            sampler = iter(EndpointSampler(cutting_strategy))
+
+            pending_cuts = []
+
+            def cut_iterator():
+                done = False
+                while True:
+                    if not done and len(pending_cuts) < 100:
+                        batch = list(itertools.islice(sampler, 100))
+                        if not batch:
+                            done = True
+                        else:
+                            pending_cuts.extend(batch)
+                            pending_cuts.sort(key=lambda t: (t[1] - t[0], t[0]))
+                    if pending_cuts:
+                        yield pending_cuts.pop()
+                    else:
+                        break
 
             initial_size = len(target)
 
-            good_cuts = self.consume_many_cuts(cutting_strategy, sampler)
+            good_cuts = self.consume_many_cuts(cutting_strategy, cut_iterator())
 
             working_target = cut_all(target, good_cuts)
 
@@ -384,4 +401,6 @@ class EndpointSampler(object):
                 swap_and_pop(indices, i_index)
                 continue
 
-            yield (i, pop_random(endpoints, random))
+            j = pop_random(endpoints, random)
+            if j >= i + 100:
+                yield (i, j)
