@@ -12,6 +12,7 @@ from multiprocessing import cpu_count
 from shutil import which
 from random import Random
 from shrinkray.junkdrawer import find_integer
+import shutil
 
 from tqdm import tqdm
 import click
@@ -252,7 +253,13 @@ def reducer(
 
         first_call = False
 
-        with tempfile.TemporaryDirectory() as d:
+        try:
+            d = tempfile.mkdtemp()
+            env = dict(os.environ)
+            tmpdir = os.path.join(d, "tmpdir")
+            os.mkdir(tmpdir)
+            env["TMPDIR"] = tmpdir
+
             sp = subprocess.Popen(
                 test,
                 stdin=subprocess.PIPE,
@@ -261,6 +268,7 @@ def reducer(
                 universal_newlines=False,
                 preexec_fn=os.setsid,
                 cwd=d,
+                env=env,
             )
 
             original_string = string
@@ -302,8 +310,16 @@ def reducer(
                         )
                 except FileExistsError:
                     pass
+        finally:
+            for _ in range(3):
+                try:
+                    shutil.rmtree(d)
+                except FileNotFoundError:
+                    break
+                except OSError:
+                    time.sleep(0.1)
 
-            return sp.returncode == 0
+        return sp.returncode == 0
 
     if replace:
         target = os.path.abspath(filename)
