@@ -1,3 +1,6 @@
+from sortedcontainers import SortedList
+
+
 def find_integer(f):
     """Finds a (hopefully large) integer n such that f(n) is True and f(n + 1)
     is False. Runs in O(log(n)).
@@ -47,6 +50,11 @@ def swap_and_pop(seq, i):
 
 
 def pop_random(seq, random):
+    if isinstance(seq, SortedList):
+        i = random.randrange(0, len(seq))
+        result = seq[i]
+        del seq[i]
+        return result
     return swap_and_pop(seq, random.randrange(0, len(seq)))
 
 
@@ -96,3 +104,46 @@ class LazySequenceCopy(object):
             i += n
         assert 0 <= i < n
         return i
+
+
+class Stream(object):
+    """A cache over some generator."""
+
+    def __init__(self, generator):
+        self.__generator = generator
+        self.__results = []
+        self.__done = False
+
+    def __iter__(self):
+        for t in self.__results:
+            yield t
+        while self.__advance():
+            yield self.__results[-1]
+
+    def __advance(self):
+        n = len(self.__results)
+        if not self.__done:
+            try:
+                self.__results.append(next(self.__generator))
+            except StopIteration:
+                self.__done = True
+        assert len(self.__results) > n or self.__done
+        return not self.__done
+
+    def __getitem__(self, i):
+        if isinstance(i, slice):
+            stop = i.stop
+        else:
+            stop = i + 1
+
+        while stop > len(self.__results) and self.__advance():
+            pass
+        return self.__results[i]
+
+    def iter_from(self, i):
+        while True:
+            try:
+                yield self[i]
+            except IndexError:
+                break
+            i += 1

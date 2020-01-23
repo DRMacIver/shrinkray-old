@@ -2,22 +2,18 @@ import hashlib
 import itertools
 import math
 import sys
-from collections import Counter, deque
+from collections import Counter, deque, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from math import ceil
 from random import Random
 from threading import Lock
-
-from shrinkray.cutting import (
-    BracketCuttingStrategy,
-    CharCuttingStrategy,
-    CutRepetitions,
-    NGramCuttingStrategy,
-    ShortCuttingStrategy,
-    TokenCuttingStrategy,
-    ToCharsCuttingStrategy,
-)
+import heapq
+import re
+import bisect
+from bisect import bisect_left
+from sortedcontainers import SortedList
 from shrinkray.junkdrawer import (
+    Stream,
     LazySequenceCopy,
     find_integer,
     pop_random,
@@ -31,16 +27,6 @@ class InvalidArguments(Exception):
 
 
 class Reducer(object):
-
-    CUTTING_STRATEGIES = [
-        BracketCuttingStrategy,
-        NGramCuttingStrategy,
-        CharCuttingStrategy,
-        TokenCuttingStrategy,
-        ShortCuttingStrategy,
-        CutRepetitions,
-    ]
-
     def __init__(
         self,
         initial,
@@ -103,14 +89,19 @@ class Reducer(object):
             if key not in self.__cache:
                 self.__cache[key] = result
 
-                if result and sort_key(value) < sort_key(self.target):
+                if result:
                     if len(value) < len(self.target):
                         self.debug(
                             f"Reduced best to {len(value)} bytes (removed {len(self.target) - len(value)} bytes)"
                         )
-                    self.target = value
-                    for f in self.__improvement_callbacks:
-                        f(value)
+                    else:
+                        self.debug(
+                            f"Found satisfying example of size {len(value)} bytes"
+                        )
+                    if sort_key(value) < sort_key(self.target):
+                        self.target = value
+                        for f in self.__improvement_callbacks:
+                            f(value)
             else:
                 # We want to force consistency even when the test is flaky
                 # (which can happen e.g. due to timeouts in calling the test
@@ -121,43 +112,161 @@ class Reducer(object):
 
         return result
 
-    def slowly_reduce(self):
-        for cs in reversed(self.CUTTING_STRATEGIES):
-            prev = None
-            while prev is not self.target:
-                prev = self.target
-                self.deterministic_cutting(cs, adaptive=False)
+    def delete_matching_brackets(self, bracket):
+        l, r = bracket
+
+        target = self.target
+
+        regions = []
+        stack = []
+
+        labelled_starts = defaultdict(list)
+
+        for i, c in enumerate(target):
+            if c == l:
+                stack.append(i)
+                labelled_starts[len(stack)].append(i)
+            elif c == r and stack:
+                regions.append((stack.pop(), i))
+
+        if regions:
+            self.debug(f"Deleting matching brackets {bracket}")
+            self.attempt_merge_cuts(
+                target,
+                [(i, j + 1) for i, j in regions]
+                + [(i + 1, j) for i, j in regions if i + 1 < j]
+                + [t for v in labelled_starts.values() for t in zip(v, v[1:])],
+            )
+
+    def one_pass_delete(self, ls, test):
+        """Returns a subsequence ``result`` of ``ls`` such
+        that ``test(result)`` is True. If ``result == ls``
+        then ``ls`` is 1-minimal: i.e. no element can be
+        removed from it.
+        """
+        ls = list(ls)
+
+        i = len(ls)
+        while True:
+            try:
+                i = self.find_first(
+                    lambda j: test(ls[:j] + ls[j + 1 :]), range(i, -1, -1),
+                )
+            except NotFound:
+                break
+            k = find_integer(lambda k: k <= i and test(ls[: i - k] + ls[i + 1 :]))
+            del ls[i - k : i + 1]
+            i -= k + 1
+
+#       k = 2
+#       while k < len(ls):
+#           i = 0
+#           while i + k <= len(ls):
+#               try:
+#                   i = self.find_first(
+#                       lambda j: test(ls[:j] + ls[j + k:]),
+#                       range(i, len(ls) - k),
+#                   )
+#               except NotFound:
+#                   break
+#               del ls[i:i+k]
+#           k += 1
+
+        return ls
+
+    def delete_one_cuts(self):
+        self.debug("Deleting 1-cuts")
+
+        index = defaultdict(list)
+        target = self.target
+        for i, c in enumerate(target):
+            index[c].append(i)
+
+        parts = [sorted({0, len(target)} | set(v)) for v in index.values()]
+
+        self.attempt_merge_cuts(
+            target, [t for part in parts for t in zip(part, part[1:])]
+        )
+
+    def delete_by_chars(self):
+        alphabet = set(self.target)
+
+        target = self.target
+        counts = Counter(target)
+
+        while alphabet:
+            c = min(alphabet, key=lambda c: (counts[c], c))
+            alphabet.remove(c)
+            if counts[c] == 0:
+                continue
+            sep = bytes([c])
+            self.one_char_delete(sep)
+            new_target = self.target
+            if new_target != target:
+                target = new_target
+                counts = Counter(target)
+
+    def one_char_delete(self, sep):
+        target = self.target
+        ls = target.split(sep)
+        self.debug(f"Deleting by {sep}, split into {len(ls)} parts")
+        self.one_pass_delete(ls, lambda t: self.predicate(sep.join(t)))
+            
+
+    def delete_repeated_intervals(self):
+        self.debug("Deleting repeated intervals")
+
+        target = self.target
+        self.attempt_merge_cuts(target, repeated_intervals(target))
+
+    def delete_short_ranges(self):
+        self.debug("Deleting short intervals")
+        self.attempt_merge_cuts(
+            self.target,
+            [
+                (i, j)
+                for i in range(len(self.target))
+                for j in range(i + 1, min(len(self.target), i + 11))
+            ],
+        )
 
     def run(self):
         initial_time = time.monotonic()
 
-        if self.__slow:
-            self.slowly_reduce()
-
-        for cs in self.CUTTING_STRATEGIES:
-            self.chaos_run(cs)
-
-        self.alphabet_reduce()
+        #       self.delete_re(rb'/\*.+?\*/')
+        #       self.delete_re(rb'#.+?\n')
+        #       self.delete_re(rb'//.+?\n')
+        #       self.delete_re(rb'"[^"]*"', adjust=lambda i, j: (i + 1, j))
+        #       self.delete_re(rb"'[^']*'", adjust=lambda i, j: (i + 1, j))
 
         prev = None
+        initial_passes = True
         while prev is not self.target:
             prev = self.target
 
-            for cs in self.CUTTING_STRATEGIES:
-                self.deterministic_cutting(cs)
+            self.delete_matching_brackets(b"{}")
+            self.delete_matching_brackets(b"[]")
+            self.delete_matching_brackets(b"()")
+            self.delete_matching_brackets(b"<>")
+            self.delete_repeated_intervals()
+            self.delete_short_ranges()
+            continue
+            self.delete_lines()
 
-            if prev is self.target:
-                self.take_prefixes()
-                self.take_suffixes()
+            if prev is not self.target and initial_passes:
+                continue
 
-            if prev is self.target:
-                self.alphabet_reduce()
+            self.delete_one_cuts()
+
+            initial_passes = False
+
+            self.delete_short_ranges()
 
         runtime = time.monotonic() - initial_time
 
         self.debug(f"Reduction completed in {runtime:.2f}s")
 
-    def __find_first(self, f, xs):
+    def find_first(self, f, xs):
         for x in self.filter(f, xs):
             return x
         raise NotFound()
@@ -165,14 +274,14 @@ class Reducer(object):
     def take_prefixes(self):
         self.debug("taking prefixes")
         target = self.target
-        self.__find_first(
+        self.find_first(
             lambda i: self.predicate(target[:i]), range(len(target) + 1),
         )
 
     def take_suffixes(self):
         self.debug("taking suffixes")
         target = self.target
-        self.__find_first(
+        self.find_first(
             lambda i: self.predicate(target[i:]), range(len(target), -1, -1),
         )
 
@@ -245,73 +354,94 @@ class Reducer(object):
             if len(good_cuts) <= 10:
                 return
 
-    def deterministic_cutting(self, cls, adaptive=True):
-        self.debug(f"Beginning deterministic cutting with {cls.__name__}")
-        i = len(self.target)
-        while i > 0:
-            target = self.target
-            self.debug(f"Starting cuts from {i} / {len(target)}")
+    def delete_re(self, expression, adjust=None):
+        expression = re.compile(expression, re.DOTALL | re.MULTILINE)
 
-            cutting_strategy = cls(self, target)
+        target = self.target
 
-            good_cuts = self.consume_many_cuts(
-                cutting_strategy,
-                (
-                    (a, b)
-                    for a in range(min(i, len(target)) - 1, -1, -1)
-                    for b in reversed(cutting_strategy.endpoints(a))
-                ),
-                adaptive=adaptive,
-            )
+        cuts = []
+        i = 0
+        prev = -1
+        while True:
+            assert i > prev
+            prev = i
+            m = expression.match(target, pos=i)
+            if m is None:
+                break
+            cuts.append(m.span())
+            i = cuts[-1][0] + 1
 
-            if not good_cuts:
-                return
+        cuts = [m.span() for m in expression.finditer(target)]
+        if adjust is not None:
+            cuts = [adjust(*c) for c in cuts]
+            cuts = [c for c in cuts if c is not None and c[0] < c[1]]
 
-            i = good_cuts[0][0]
+        if cuts:
+            self.debug(f"Deleting matches of {expression}")
+            self.attempt_merge_cuts(target, cuts)
 
-    def consume_many_cuts(self, cutting_strategy, cuts, adaptive=True):
-        target = cutting_strategy.target
-        working_target = target
+    def attempt_merge_cuts(self, target, cuts):
+        cuts = list(cuts)
+        if not cuts:
+            return
+        DeletionState(self, target, cuts).run()
+        return
 
+        self.debug(f"Trying to delete {len(cuts)} cuts")
         good_cuts = []
 
-        def can_cut(i, j):
-            if not (0 <= i < j <= len(target)):
-                return False
-            if not good_cuts:
-                return self.predicate(target[:i] + target[j:])
-            if j <= good_cuts[0][0]:
-                return self.predicate(working_target[:i] + working_target[j:])
-            return self.predicate(cut_all(target, good_cuts + [(i, j)]))
+        if self.__slow:
+            for c in cuts:
+                good_cuts.append(c)
+                if not self.predicate(cut_all(target, good_cuts)):
+                    good_cuts.pop()
+            return good_cuts
 
-        redundant_merges = 0
+        if self.predicate(cut_all(target, cuts)):
+            return cuts
 
-        for a, b in self.filter(
-            lambda t: self.predicate(target[: t[0]] + target[t[1] :]), cuts,
-        ):
-            if not can_cut(a, b):
-                # We've hit a conflict. Restart the cutting from the last
-                # place we succeeded at cutting.
+        for c in cuts:
+            assert c[0] < c[1], c
+
+        cuts.sort(key=lambda c: (c[1], -c[0]))
+
+        prev = float("inf")
+        while True:
+            assert good_cuts == merged_cuts(good_cuts)
+            current_best = cut_all(target, good_cuts)
+            assert self.predicate(current_best)
+            assert len(current_best) < prev
+            prev = len(current_best)
+
+            if good_cuts:
+                cuts = [c for c in cuts if not cut_contained(good_cuts, c)]
+
+            try:
+                i = self.find_first(
+                    lambda i: self.predicate(cut_all(target, good_cuts + [cuts[i]])),
+                    range(len(cuts) - 1, -1, -1),
+                )
+            except NotFound:
+                for c in shuffle_of(self.random, cuts):
+                    assert not self.predicate(cut_all(target, good_cuts + [c]))
                 break
 
-            if adaptive:
-                cut = cutting_strategy.enlarge_cut(a, b, can_cut)
-            else:
-                cut = (a, b)
+            del cuts[i + 1 :]
 
-            good_cuts.append(cut)
-            good_cuts = merged_cuts(good_cuts)
+            i -= find_integer(
+                lambda k: k <= i
+                and self.predicate(cut_all(target, good_cuts + cuts[i - k :]))
+            )
+            assert i >= 0
 
-            # We've gotten to a point where most of the cuts we're discovering
-            # are a bit useless, probably because of a successful cut expansion
-            # that includes them. If this happens then we bail early so as to
-            # not waste time doing work that doesn't need doing.
-            prev = working_target
-            working_target = cut_all(target, good_cuts)
-            if working_target == prev:
-                redundant_merges += 1
-                if redundant_merges >= 10:
-                    break
+            to_merge = cuts[i:]
+
+            assert to_merge
+            good_cuts = merged_cuts(good_cuts + to_merge)
+            del cuts[i:]
+
+            self.debug(f"Merged {len(to_merge)} cuts")
+
         return good_cuts
 
     def map(self, f, ls):
@@ -323,11 +453,12 @@ class Reducer(object):
             any_yields = True
             while any_yields:
                 any_yields = False
-                for v in self.__thread_pool.map(f, itertools.islice(it, block_size)):
-                    any_yields = True
-                    yield v
+                with ThreadPoolExecutor(max_workers=self.__parallelism) as tpe:
+                    for v in tpe.map(f, itertools.islice(it, block_size)):
+                        any_yields = True
+                        yield v
                 block_size *= 2
-                block_size = min(block_size, 10 * self.__parallelism)
+                block_size = min(block_size, 2 * self.__parallelism)
         else:
             for x in ls:
                 yield f(x)
@@ -336,6 +467,14 @@ class Reducer(object):
         for x, r in self.map(lambda x: (x, f(x)), ls):
             if r:
                 yield x
+
+    def any(self, f, ls):
+        ls = list(ls)
+        self.random.shuffle(ls)
+        for x, r in self.map(lambda x: (x, f(x)), ls):
+            if r:
+                return True
+        return False
 
 
 def merged_cuts(cuts):
@@ -376,31 +515,212 @@ def sort_key(s):
     return (len(s), s)
 
 
-class EndpointSampler(object):
-    def __init__(self, cutting_strategy):
-        self.cutting_strategy = cutting_strategy
-        self.indices = LazySequenceCopy(range(len(cutting_strategy.target)))
-        self.endpoints_remaining = {}
+def shuffled_range(random, lo, hi):
+    return shuffle_of(range(lo, hi))
 
-    def __iter__(self):
-        cs = self.cutting_strategy
-        random = cs.reducer.random
-        indices = self.indices
-        endpoints_remaining = self.endpoints_remaining
 
-        while self.indices:
-            i_index = random.randrange(0, len(indices))
-            i = indices[i_index]
-            try:
-                endpoints = endpoints_remaining[i]
-            except KeyError:
-                endpoints = endpoints_remaining.setdefault(
-                    i, LazySequenceCopy(cs.endpoints(i))
-                )
-            if not endpoints:
-                swap_and_pop(indices, i_index)
-                continue
+def shuffle_of(random, ls):
+    values = LazySequenceCopy(ls)
+    while values:
+        yield pop_random(values, random)
 
-            j = pop_random(endpoints, random)
-            if j >= i + 100:
-                yield (i, j)
+
+def repeated_intervals(target):
+    return [(i, j) for ls in repeated_intervals_with_ngram(target).values() for (i, j) in ls]
+
+
+def repeated_intervals_with_ngram(target):
+    index = defaultdict(list)
+    for i, c in enumerate(target):
+        index[c].append(i)
+
+    queue = []
+    results = defaultdict(list)
+
+    for v in index.values():
+        if len(v) > 1:
+            queue.append((1, v))
+
+    del index
+
+    while queue:
+        k, indices = queue.pop()
+
+        end = indices[-1]
+        while True:
+            while indices and indices[-1] + k >= len(target):
+                indices.pop()
+            if not indices:
+                break
+            if len({target[i + k] for i in indices}) > 1:
+                break
+            k += 1
+
+        if len(indices) <= 1 or (
+            indices[0] > 0 and len({target[i - 1] for i in indices}) == 1
+        ):
+            continue
+
+        start = indices[0]
+        ngram = target[start:start+k]
+
+        cuts = results[ngram]
+
+        cuts.append((0, start + k))
+
+        for i, start in enumerate(indices):
+            j = i + 1
+            while j < len(indices) and indices[j] <= i + k:
+                j += 1
+            if j < len(indices):
+                results[ngram].append((start, indices[j]))
+
+        cuts.append((indices[-1], len(target)))
+
+        grouped = defaultdict(list)
+        for i in indices:
+            grouped[target[i + k]].append(i)
+        for v in grouped.values():
+            if len(v) > 1:
+                queue.append((k + 1, v))
+
+    return results
+
+
+def cut_contained(cuts, candidate):
+    i = max(0, bisect.bisect_left(cuts, candidate) - 1)
+    while i < len(cuts) and cuts[i][0] <= candidate[0]:
+        c = cuts[i]
+        i += 1
+        if (c[0] <= candidate[0] <= candidate[1] <= c[1] for c in cuts):
+            return True
+    return False
+
+
+def cut_overlaps(cuts, candidate):
+    i = max(0, bisect.bisect_left(cuts, candidate) - 1)
+    while i < len(cuts) and cuts[i][0] < candidate[1]:
+        c = cuts[i]
+        i += 1
+        if not (c[1] <= candidate[0] or candidate[1] <= c[0]):
+            return True
+    return False
+
+def all_indices(string, ngram):
+    indices = []
+    i = 0
+    while True:
+        try:
+            i = string.index(ngram, i)
+        except ValueError:
+            break
+        indices.append(i)
+        i += 1
+    return indices
+
+
+class DeletionState(object):
+    def __init__(self, reducer, target, cuts):
+        self.reducer = reducer
+        self.target = target
+        self.cuts = SortedList(cuts)
+        self.good_cuts = []
+
+        self.__done = set()
+        self.__random = self.reducer.random
+        self.__queue = deque()
+
+    def can_cut(self, *cuts):
+        return self.reducer.predicate(cut_all(self.target, self.good_cuts + list(cuts)))
+
+    def already_cut(self, i):
+        if not self.good_cuts:
+            return False
+        j = bisect_left(self.good_cuts, (i,))
+        while j > 0 and self.good_cuts[j - 1][1] >= i:
+            j -= 1
+        while j < len(self.good_cuts):
+            cut = self.good_cuts[j]
+            if cut[0] > i:
+                return False
+            if cut[0] <= i < cut[1]:
+                return True
+            j += 1
+        return False
+
+    def debug(self, *args, **kwargs):
+        self.reducer.debug(*args, **kwargs)
+
+    def run(self):
+        random = False
+        failures = 0
+        while self.cuts:
+            if len(self.cuts) > 100:
+                cuts = self.__random.sample(self.cuts, 100)
+            else:
+                cuts = self.cuts
+            cuts = sorted(cuts, key=lambda x: (x[1] - x[0], x[0] ), reverse=True)
+
+            for cut, good in zip(cuts, self.reducer.map(self.can_cut, cuts)):
+                if good:
+                    self.try_delete_cut(cut)
+                    break
+                else:
+                    self.cuts.remove(cut)
+
+    def delete_at(self, i):
+        if not (0 <= i < len(self.target)):
+            return
+        if self.already_cut(i):
+            return
+        if i in self.__done:
+            return
+        self.__done.add(i)
+
+        j = bisect_left(self.cuts, (i,))
+        while j > 0 and self.cuts[j - 1][1] >= i:
+            j -= 1
+        candidates = []
+        while j < len(self.cuts):
+            cut = self.cuts[j]
+            if cut[0] > i:
+                break
+            if cut[1] > i:
+                assert cut[0] <= i < cut[1], (cut, i)
+                candidates.append(cut)
+            j += 1
+        if not candidates:
+            return
+
+        self.debug(f"Trying {len(candidates)} cuts around {i}")
+
+        candidates.sort(key=lambda c: (c[1] - c[0], c[0]), reverse=True)
+
+        for cut, good in zip(candidates, self.reducer.map(self.can_cut, candidates)):
+            if good:
+                self.try_delete_cut(cut)
+                return
+            else:
+                self.cuts.remove(cut)
+
+    def try_delete_cut(self, cut):
+        if cut not in self.cuts:
+            return False
+
+        if not self.can_cut(cut):
+            return False
+
+        i = self.cuts.index(cut)
+
+        upper = find_integer(lambda k: i + k <= len(self.cuts) and self.can_cut(*self.cuts[i:i+k]))
+        assert upper > 0
+        lower = find_integer(lambda k: i - k >= 0 and self.can_cut(*self.cuts[i - k:i+upper]))
+        self.good_cuts = merged_cuts(self.good_cuts + self.cuts[i-lower:i+upper])
+        self.cuts = [c for c in self.cuts if not cut_contained(self.good_cuts, c)]
+
+        del self.cuts[max(0, i - lower):i + upper + 1]
+        total = upper + lower
+        if total > 1:
+            self.debug(f"Deleted {total} cuts")
+
+        return True
